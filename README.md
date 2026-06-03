@@ -1,36 +1,75 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Forja HUB
 
-## Getting Started
+Worldbuilding studio com IA, RAG e edição estruturada. Você gera NPCs, itens, lugares (mais por vir), mantendo coerência com a lore do mundo via embeddings + biblioteca canônica.
 
-First, run the development server:
+> Estado atual: **MVP**. Gera NPC e Item, com RAG sobre entidades do mundo, biblioteca de livros (`.md`/`.txt`) e habilidades. Tudo editável, exportável e auditado.
 
+## Stack
+
+- Next.js 16 (App Router) · React 19 · TypeScript strict
+- Postgres + **pgvector** (Supabase)
+- Prisma 6 ORM
+- Zod 4 (validação) · TanStack Query · Zustand
+- Tailwind 4
+- **Anthropic** Claude Sonnet 4.6 (geração, via `messages.parse` + `zodOutputFormat`)
+- **Voyage AI** `voyage-3-large` (embeddings, 1024d)
+
+## Setup (10 minutos)
+
+### 1. Supabase
+1. Crie um projeto em [supabase.com](https://supabase.com). pgvector já vem habilitado.
+2. Em **Connect → ORMs**, copie:
+   - **Transaction pooler** (porta 6543) → `DATABASE_URL`
+   - **Session pooler** (porta 5432) → `DIRECT_URL`
+
+### 2. Chaves de API
+- Anthropic: [console.anthropic.com](https://console.anthropic.com/settings/keys)
+- Voyage AI: [dash.voyageai.com](https://dash.voyageai.com/api-keys)
+
+### 3. Variáveis de ambiente
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cp .env.example .env.local
+# preencha DATABASE_URL, DIRECT_URL, ANTHROPIC_API_KEY, VOYAGE_API_KEY
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 4. Migrations e seed
+```bash
+pnpm install
+pnpm db:migrate          # aplica a migration inicial (cria pgvector + tabelas + índices HNSW)
+pnpm db:seed             # cria System 'Fantasia Genérica' + Generators + ModelPricing
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 5. Rode
+```bash
+pnpm dev
+# http://localhost:3000
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Fluxo: **/worlds/new** → cria mundo → clica em "+ Gerar" → escolhe NPC ou Item → preenche conceito-semente.
 
-## Learn More
+## Scripts úteis
 
-To learn more about Next.js, take a look at the following resources:
+| Comando | O que faz |
+|---|---|
+| `pnpm dev` | dev server (Turbopack) |
+| `pnpm build` | build de produção |
+| `pnpm typecheck` | tsc --noEmit |
+| `pnpm test` | vitest run |
+| `pnpm db:migrate` | aplica migrations pendentes |
+| `pnpm db:migrate:dev` | cria migration nova a partir de mudança no schema |
+| `pnpm db:seed` | (re)seed |
+| `pnpm db:reset` | drop + recreate + reseed (cuidado!) |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Arquitetura
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Ver [`CLAUDE.md`](./CLAUDE.md) — documentação viva da arquitetura, decisões, convenções e roadmap.
 
-## Deploy on Vercel
+Tl;dr:
+- `src/core/` — motor puro (LLM, generators, RAG, engine) — **não** importa `next/*`.
+- `src/app/` — App Router (UI + route handlers).
+- `src/db/` — Prisma singleton + helpers raw SQL pra pgvector.
+- `prisma/` — schema + migrations + seed.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Backlog (fase 2+)
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Tipos: LOCATION, FACTION, CREATURE, QUEST, ENCOUNTER · Books PDF · Geração em lote · Sessions/log de campanha · Habilidades canônicas · Grafo visual · Mais providers (Gemini, OpenAI-compatible) · Mais rulesets · Geração de imagem · Export VTT/PDF.

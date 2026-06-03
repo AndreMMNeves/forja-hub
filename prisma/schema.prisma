@@ -1,0 +1,319 @@
+// Forja HUB — schema do banco
+// pgvector é gerenciado por migration SQL custom (ver migrations/<...>_pgvector_setup/migration.sql)
+// Embeddings: voyage-3-large → vector(1024)
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DIRECT_URL")
+  extensions = [vector]
+}
+
+// ─────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────
+
+enum EntityType {
+  NPC
+  ITEM
+  LOCATION
+  FACTION
+  CREATURE
+  QUEST
+  ENCOUNTER
+  LOOT_TABLE
+  CUSTOM
+}
+
+enum CampaignStatus {
+  ACTIVE
+  PAUSED
+  FINISHED
+  ARCHIVED
+}
+
+enum BookSource {
+  MD
+  TXT
+  PDF
+}
+
+// ─────────────────────────────────────────────
+// SYSTEM — agrupa ruleset, livros, habilidades canônicas, sheet template
+// ─────────────────────────────────────────────
+
+model System {
+  id            String   @id @default(cuid())
+  slug          String   @unique
+  name          String
+  description   String?
+  language      String   @default("pt-BR")
+  entitySchemas Json     // schemas por EntityType (JSON-schema-ish do ruleset)
+  sheetTemplate Json?    // estrutura de ficha de PC nesse sistema
+  defaultModel  String?  // override do modelo Anthropic default
+  isBuiltin     Boolean  @default(false)
+  worlds        World[]
+  books         Book[]
+  abilities     Ability[] @relation("SystemAbilities")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// ─────────────────────────────────────────────
+// WORLD — instância de mundo (lore própria) sobre um System
+// ─────────────────────────────────────────────
+
+model World {
+  id          String     @id @default(cuid())
+  name        String
+  description String?
+  tone        String?    // "dark fantasy", "swashbuckling", "weird west"… orienta o tom dos prompts
+  language    String     @default("pt-BR")
+  systemId    String
+  system      System     @relation(fields: [systemId], references: [id], onDelete: Restrict)
+  entities    Entity[]
+  abilities   Ability[]  @relation("WorldAbilities")
+  campaigns   Campaign[]
+  ideas       Idea[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([systemId])
+}
+
+// ─────────────────────────────────────────────
+// CAMPAIGN — sessão de jogo viva num World
+// ─────────────────────────────────────────────
+
+model Campaign {
+  id         String         @id @default(cuid())
+  worldId    String
+  world      World          @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  name       String
+  summary    String?
+  status     CampaignStatus @default(ACTIVE)
+  characters Character[]
+  entities   Entity[]
+  ideas      Idea[]
+  // Sessions: fase 2 — modelo Session será adicionado depois
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  @@index([worldId])
+}
+
+// ─────────────────────────────────────────────
+// ENTITY — NPC, Item, Location, Faction, Creature, Quest, Encounter, LootTable, Custom
+// ─────────────────────────────────────────────
+
+model Entity {
+  id         String       @id @default(cuid())
+  worldId    String
+  world      World        @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  campaignId String?
+  campaign   Campaign?    @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  type       EntityType
+  name       String
+  summary    String?      // 1 linha pro card
+  data       Json         // payload validado pelo schema do System pra esse type
+  tags       String[]     @default([])
+  fieldEdits Json?        // { fieldPath: "manual" | "generated" } pra idempotência
+  // embedding vector(1024) — gerenciado por migration SQL custom
+  embedding  Unsupported("vector(1024)")?
+  links      EntityLink[] @relation("from")
+  linkedBy   EntityLink[] @relation("to")
+  ideas      Idea[]
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  @@index([worldId, type])
+  @@index([worldId, name])
+  @@index([campaignId])
+}
+
+model EntityLink {
+  id           String  @id @default(cuid())
+  fromId       String
+  toId         String
+  relation     String  // ex: "membro_de", "dono_de", "localizado_em", "inimigo_de"
+  inverseLabel String? // label oposto pra exibir no backlink ("tem membro", "pertence a"…)
+  from         Entity  @relation("from", fields: [fromId], references: [id], onDelete: Cascade)
+  to           Entity  @relation("to",   fields: [toId],   references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now())
+
+  @@unique([fromId, toId, relation])
+  @@index([toId])
+}
+
+// ─────────────────────────────────────────────
+// CHARACTER — PC com ficha, vinculado a uma Campaign (separado de Entity)
+// ─────────────────────────────────────────────
+
+model Character {
+  id          String   @id @default(cuid())
+  campaignId  String
+  campaign    Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  name        String
+  playerName  String?  // jogador real
+  concept     String?  // "ladina meio-elfa renegada"…
+  sheet       Json     // instância do sheetTemplate do System (atributos, inventário, etc.)
+  tags        String[] @default([])
+  // embedding vector(1024) — opcional, pra busca semântica
+  embedding   Unsupported("vector(1024)")?
+  ideas       Idea[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([campaignId])
+}
+
+// ─────────────────────────────────────────────
+// ABILITY — habilidade reutilizável (canônica do System OU homebrew do World)
+// Restrição XOR (systemId XOR worldId) garantida em app + check constraint via migration
+// ─────────────────────────────────────────────
+
+model Ability {
+  id        String   @id @default(cuid())
+  systemId  String?
+  worldId   String?
+  system    System?  @relation("SystemAbilities", fields: [systemId], references: [id], onDelete: Cascade)
+  world     World?   @relation("WorldAbilities",  fields: [worldId],  references: [id], onDelete: Cascade)
+  name      String
+  category  String?  // "magia", "manobra", "talento", "poder", "move"…
+  data      Json     // descrição, custo, alcance, requisitos, dano…
+  tags      String[] @default([])
+  embedding Unsupported("vector(1024)")?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([systemId])
+  @@index([worldId])
+}
+
+// ─────────────────────────────────────────────
+// BIBLIOTECA — Books canônicos do System, fragmentados em chunks com embedding (RAG)
+// ─────────────────────────────────────────────
+
+model Book {
+  id         String      @id @default(cuid())
+  systemId   String
+  system     System      @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  title      String
+  author     String?
+  sourceType BookSource
+  language   String      @default("pt-BR")
+  rawText    String      @db.Text
+  chunks     BookChunk[]
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  @@index([systemId])
+}
+
+model BookChunk {
+  id        String   @id @default(cuid())
+  bookId    String
+  book      Book     @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  ord       Int      // ordem do chunk dentro do livro
+  text      String   @db.Text
+  heading   String?  // título da seção/capítulo de onde veio (se detectável)
+  embedding Unsupported("vector(1024)")?
+  createdAt DateTime @default(now())
+
+  @@index([bookId, ord])
+}
+
+// ─────────────────────────────────────────────
+// IDEAS — caderno de rascunhos, promovível a Entity/Character
+// ─────────────────────────────────────────────
+
+model Idea {
+  id                   String     @id @default(cuid())
+  worldId              String
+  world                World      @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  campaignId           String?
+  campaign             Campaign?  @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  text                 String     @db.Text
+  tags                 String[]   @default([])
+  promotedToEntityId   String?
+  promotedToEntity     Entity?    @relation(fields: [promotedToEntityId], references: [id], onDelete: SetNull)
+  promotedToCharacterId String?
+  promotedToCharacter  Character? @relation(fields: [promotedToCharacterId], references: [id], onDelete: SetNull)
+  embedding            Unsupported("vector(1024)")?
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
+
+  @@index([worldId])
+  @@index([campaignId])
+}
+
+// ─────────────────────────────────────────────
+// GENERATOR — definição declarativa de cada gerador (NPC, Item, Encontro…)
+// O builder de prompt fica em código TS (src/core/generators/*).
+// Esta tabela guarda metadata + schemas pra editar pela UI no futuro.
+// ─────────────────────────────────────────────
+
+model Generator {
+  id             String     @id @default(cuid())
+  slug           String     @unique
+  name           String
+  description    String?
+  entityType     EntityType
+  inputSchema    Json
+  outputSchema   Json
+  promptTemplate String     @db.Text   // referência humana; runtime usa o builder TS por slug
+  defaults       Json?
+  isBuiltin      Boolean    @default(false)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+}
+
+// ─────────────────────────────────────────────
+// GENERATION LOG — tracking de custo + auditoria
+// ─────────────────────────────────────────────
+
+model GenerationLog {
+  id               String   @id @default(cuid())
+  generatorSlug    String?
+  entityId         String?
+  characterId      String?
+  abilityId        String?
+  provider         String
+  model            String
+  promptTokens     Int      @default(0)
+  completionTokens Int      @default(0)
+  costUsd          Float?
+  inputJson        Json?
+  ragRefs          Json?    // { entityIds:[], chunkIds:[], abilityIds:[] }
+  seed             String?
+  durationMs       Int?
+  error            String?
+  createdAt        DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([entityId])
+}
+
+// ─────────────────────────────────────────────
+// MODEL PRICING — preço por 1M tokens (input/output/embed). Sem hardcode.
+// ─────────────────────────────────────────────
+
+model ModelPricing {
+  id              String   @id @default(cuid())
+  provider        String
+  model           String
+  inputPer1M      Float?
+  outputPer1M     Float?
+  embedPer1M      Float?
+  embedDimensions Int?
+  currency        String   @default("USD")
+  effectiveFrom   DateTime @default(now())
+  notes           String?
+
+  @@unique([provider, model, effectiveFrom])
+}

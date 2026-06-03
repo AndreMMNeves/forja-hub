@@ -1,26 +1,46 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Forja HUB — dark codex theme. Sempre dark por default. */
+  --bg: #0b0b0f;
+  --bg-elev: #14141c;
+  --bg-elev-2: #1c1c28;
+  --border: #2a2a3a;
+  --fg: #e6e4d8;
+  --fg-muted: #8e8a76;
+  --accent: #c89b3c; /* dourado pergaminho */
+  --accent-strong: #e3b56e;
+  --danger: #c5586a;
+  --link: #8fb7e3;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-bg: var(--bg);
+  --color-bg-elev: var(--bg-elev);
+  --color-bg-elev-2: var(--bg-elev-2);
+  --color-border: var(--border);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-danger: var(--danger);
+  --color-link: var(--link);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html, body {
+  background: var(--bg);
+  color: var(--fg);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), ui-sans-serif, system-ui;
+}
+
+a {
+  color: var(--link);
+}
+a:hover {
+  color: var(--accent-strong);
 }
